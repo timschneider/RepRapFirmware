@@ -193,20 +193,6 @@ void ExpressionValue::Release() noexcept
 	}
 }
 
-// Get the format string to use assuming this is a floating point number
-const char *_ecv_array ExpressionValue::GetFloatFormatString() const noexcept
-{
-	float f = 1.0;
-	unsigned int digitsAfterPoint = param;
-	while (digitsAfterPoint > 1 && fVal > f)
-	{
-		f *= 10.0;
-		--digitsAfterPoint;
-	}
-
-	return ::GetFloatFormatString(digitsAfterPoint);
-}
-
 #if SUPPORT_CAN_EXPANSION
 
 // Given that this is a CanExpansionBoardDetails value, extract the part requested according to the parameter and append it to the string
@@ -227,6 +213,9 @@ void ExpressionValue::ExtractRequestedPart(const StringRef& rslt) const noexcept
 
 		switch((ExpansionDetail)param)
 		{
+		case ExpansionDetail::longName:
+			rslt.cat("Duet 3 Expansion ");
+			// no break
 		case ExpansionDetail::shortName:
 			rslt.catn(sVal, indexOfDivider1);
 			break;
@@ -667,13 +656,14 @@ void ObjectModel::ReportItemAsJsonFull(OutputBuffer *buf, ObjectExplorationConte
 			{
 				const char *endptr;
 				const int32_t index = StrToI32(filter, &endptr);
-				if (endptr == filter || *endptr != ']' || index < 0 || (size_t)index >= val.omadVal->GetNumElements(this, context))
+				const auto bm = Bitmap<uint32_t>::MakeFromRaw(val.uVal);
+				int bitNumber;
+				if (endptr == filter || *endptr != ']' || index < 0 || (bitNumber = bm.GetSetBitNumber(index)) < 0)
 				{
 					buf->cat("null");				// avoid returning badly-formed JSON
 					break;							// invalid syntax, or index out of range
 				}
-				const auto bm = Bitmap<uint32_t>::MakeFromRaw(val.uVal);
-				buf->catf("%u", bm.GetSetBitNumber(index));
+				buf->catf("%d", bitNumber);
 				break;
 			}
 		}
@@ -699,13 +689,14 @@ void ObjectModel::ReportItemAsJsonFull(OutputBuffer *buf, ObjectExplorationConte
 			{
 				const char *endptr;
 				const int32_t index = StrToI32(filter, &endptr);
-				if (endptr == filter || *endptr != ']' || index < 0 || (size_t)index >= val.omadVal->GetNumElements(this, context))
+				const auto bm = Bitmap<uint64_t>::MakeFromRaw(val.uVal);
+				int bitNumber;
+				if (endptr == filter || *endptr != ']' || index < 0 || (bitNumber = bm.GetSetBitNumber(index)) < 0)
 				{
 					buf->cat("null");				// avoid returning badly-formed JSON
 					break;							// invalid syntax, or index out of range
 				}
-				const auto bm = Bitmap<uint64_t>::MakeFromRaw(val.uVal);
-				buf->catf("%u", bm.GetSetBitNumber(index));
+				buf->catf("%d", bitNumber);
 				break;
 			}
 		}
@@ -1125,7 +1116,7 @@ decrease(strlen(idString))	// recursion variant
 		}
 		break;
 
-#if defined(DUET3) || defined(DUET3MINI)
+#if SUPPORT_CAN_EXPANSION
 	case TypeCode::CanExpansionBoardDetails:
 		if (*idString == 0)
 		{

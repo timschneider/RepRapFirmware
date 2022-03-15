@@ -29,11 +29,13 @@ constexpr ObjectModelTableEntry ExpansionManager::objectModelTable[] =
 	// 0. boards[] members
 	{ "accelerometer",		OBJECT_MODEL_FUNC_IF(self->FindIndexedBoard(context.GetLastIndex()).hasAccelerometer, self, 4),					ObjectModelEntryFlags::none },
 	{ "canAddress",			OBJECT_MODEL_FUNC((int32_t)(&(self->FindIndexedBoard(context.GetLastIndex())) - self->boards)),					ObjectModelEntryFlags::none },
+	{ "closedLoop",			OBJECT_MODEL_FUNC_IF(self->FindIndexedBoard(context.GetLastIndex()).hasClosedLoop, self, 5),					ObjectModelEntryFlags::none },
 	{ "firmwareDate",		OBJECT_MODEL_FUNC(self->FindIndexedBoard(context.GetLastIndex()).typeName, ExpansionDetail::firmwareDate),		ObjectModelEntryFlags::none },
 	{ "firmwareFileName",	OBJECT_MODEL_FUNC(self->FindIndexedBoard(context.GetLastIndex()).typeName, ExpansionDetail::firmwareFileName),	ObjectModelEntryFlags::none },
 	{ "firmwareVersion",	OBJECT_MODEL_FUNC(self->FindIndexedBoard(context.GetLastIndex()).typeName, ExpansionDetail::firmwareVersion),	ObjectModelEntryFlags::none },
 	{ "maxMotors",			OBJECT_MODEL_FUNC((int32_t)self->FindIndexedBoard(context.GetLastIndex()).numDrivers),							ObjectModelEntryFlags::none },
 	{ "mcuTemp",			OBJECT_MODEL_FUNC_IF(self->FindIndexedBoard(context.GetLastIndex()).hasMcuTemp, self, 1),						ObjectModelEntryFlags::live },
+	{ "name",				OBJECT_MODEL_FUNC(self->FindIndexedBoard(context.GetLastIndex()).typeName, ExpansionDetail::longName),			ObjectModelEntryFlags::none },
 	{ "shortName",			OBJECT_MODEL_FUNC(self->FindIndexedBoard(context.GetLastIndex()).typeName, ExpansionDetail::shortName),			ObjectModelEntryFlags::none },
 	{ "state",				OBJECT_MODEL_FUNC(self->FindIndexedBoard(context.GetLastIndex()).state.ToString()),								ObjectModelEntryFlags::none },
 	{ "uniqueId",			OBJECT_MODEL_FUNC_IF(self->FindIndexedBoard(context.GetLastIndex()).uniqueId.IsValid(),
@@ -59,16 +61,21 @@ constexpr ObjectModelTableEntry ExpansionManager::objectModelTable[] =
 	// 4. accelerometer members
 	{ "points",				OBJECT_MODEL_FUNC((int32_t)self->FindIndexedBoard(context.GetLastIndex()).accelerometerLastRunDataPoints),		ObjectModelEntryFlags::none },
 	{ "runs",				OBJECT_MODEL_FUNC((int32_t)self->FindIndexedBoard(context.GetLastIndex()).accelerometerRuns),					ObjectModelEntryFlags::none },
+
+	// 5. closedLoop members
+	{ "points",				OBJECT_MODEL_FUNC((int32_t)self->FindIndexedBoard(context.GetLastIndex()).closedLoopLastRunDataPoints),			ObjectModelEntryFlags::none },
+	{ "runs",				OBJECT_MODEL_FUNC((int32_t)self->FindIndexedBoard(context.GetLastIndex()).closedLoopRuns),						ObjectModelEntryFlags::none },
 };
 
 constexpr uint8_t ExpansionManager::objectModelTableDescriptor[] =
 {
-	5,				// number of sections
-	12,				// section 0: boards[]
+	6,				// number of sections
+	14,				// section 0: boards[]
 	3,				// section 1: mcuTemp
 	3,				// section 2: vIn
 	3,				// section 3: v12
-	2				// section 4: accelerometer
+	2,				// section 4: accelerometer
+	2				// section 5: closed loop
 };
 
 DEFINE_GET_OBJECT_MODEL_TABLE(ExpansionManager)
@@ -76,8 +83,10 @@ DEFINE_GET_OBJECT_MODEL_TABLE(ExpansionManager)
 #endif
 
 ExpansionBoardData::ExpansionBoardData() noexcept
-	: typeName(nullptr), hasMcuTemp(false), hasVin(false), hasV12(false), hasAccelerometer(false),
-	  accelerometerRuns(0), accelerometerLastRunDataPoints(0),
+	: typeName(nullptr),
+	  accelerometerLastRunDataPoints(0), closedLoopLastRunDataPoints(0),
+	  accelerometerRuns(0), closedLoopRuns(0),
+	  hasMcuTemp(false), hasVin(false), hasV12(false), hasAccelerometer(false),
 	  state(BoardState::unknown), numDrivers(0)
 {
 }
@@ -188,7 +197,7 @@ void ExpansionManager::ProcessBoardStatusReport(const CanMessageBuffer *buf) noe
 		UpdateBoardState(address, BoardState::running);
 	}
 
-	const CanMessageBoardStatus msg = buf->msg.boardStatus;
+	const CanMessageBoardStatus& msg = buf->msg.boardStatus;
 
 	// We must process the data in the correct order, to ensure that we pick up the right values
 	size_t index = 0;
@@ -209,6 +218,7 @@ void ExpansionManager::ProcessBoardStatusReport(const CanMessageBuffer *buf) noe
 		board.mcuTemp = msg.values[index++];
 	}
 	board.hasAccelerometer = msg.hasAccelerometer;
+	board.hasClosedLoop = msg.hasClosedLoop;
 }
 
 // Return a pointer to the expansion board, if it is present
@@ -287,6 +297,13 @@ void ExpansionManager::AddAccelerometerRun(CanAddress address, unsigned int numD
 {
 	boards[address].accelerometerLastRunDataPoints = numDataPoints;
 	++boards[address].accelerometerRuns;
+	reprap.BoardsUpdated();
+}
+
+void ExpansionManager::AddClosedLoopRun(CanAddress address, unsigned int numDataPoints) noexcept
+{
+	boards[address].closedLoopLastRunDataPoints = numDataPoints;
+	++boards[address].closedLoopRuns;
 	reprap.BoardsUpdated();
 }
 

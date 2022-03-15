@@ -6,6 +6,9 @@
  */
 
 #include "HangprinterKinematics.h"
+
+#if SUPPORT_HANGPRINTER
+
 #include <Platform/RepRap.h>
 #include <Platform/Platform.h>
 #include <GCodes/GCodeBuffer/GCodeBuffer.h>
@@ -444,33 +447,40 @@ bool HangprinterKinematics::WriteCalibrationParameters(FileStore *f) const noexc
 	if (ok)
 	{
 		String<100> scratchString;
-		scratchString.printf("M669 K6 A%.3f:%.3f:%.3f B%.3f:%.3f:%.3f C%.3f:%.3f:%.3f D%.3f:%.3f:%.3f P%.1f\n",
+		scratchString.printf("M669 K6 A%.3f:%.3f:%.3f B%.3f:%.3f:%.3f",
 							(double)anchors[A_AXIS][X_AXIS], (double)anchors[A_AXIS][Y_AXIS], (double)anchors[A_AXIS][Z_AXIS],
-							(double)anchors[B_AXIS][X_AXIS], (double)anchors[B_AXIS][Y_AXIS], (double)anchors[B_AXIS][Z_AXIS],
-							(double)anchors[C_AXIS][X_AXIS], (double)anchors[C_AXIS][Y_AXIS], (double)anchors[C_AXIS][Z_AXIS],
-							(double)anchors[D_AXIS][X_AXIS], (double)anchors[D_AXIS][Y_AXIS], (double)anchors[D_AXIS][Z_AXIS],
-							(double)printRadius);
+							(double)anchors[B_AXIS][X_AXIS], (double)anchors[B_AXIS][Y_AXIS], (double)anchors[B_AXIS][Z_AXIS]);
 		ok = f->Write(scratchString.c_str());
-		if (ok) {
-			scratchString.printf("M666 Q%.6f R%.3f:%.3f:%.3f:%.3f U%d:%d:%d:%d ",
-								(double)spoolBuildupFactor, (double)spoolRadii[A_AXIS],
-								(double)spoolRadii[B_AXIS], (double)spoolRadii[C_AXIS], (double)spoolRadii[D_AXIS],
-								(int)mechanicalAdvantage[A_AXIS], (int)mechanicalAdvantage[B_AXIS],
-								(int)mechanicalAdvantage[C_AXIS], (int)mechanicalAdvantage[D_AXIS]
-					);
+		if (ok)
+		{
+			scratchString.printf(" C%.3f:%.3f:%.3f D%.3f:%.3f:%.3f P%.1f\n",
+								(double)anchors[C_AXIS][X_AXIS], (double)anchors[C_AXIS][Y_AXIS], (double)anchors[C_AXIS][Z_AXIS],
+								(double)anchors[D_AXIS][X_AXIS], (double)anchors[D_AXIS][Y_AXIS], (double)anchors[D_AXIS][Z_AXIS],
+								(double)printRadius);
 			ok = f->Write(scratchString.c_str());
-			if (ok) {
-				scratchString.printf("O%d:%d:%d:%d L%d:%d:%d:%d H%d:%d:%d:%d J%d:%d:%d:%d\n",
-									(int)linesPerSpool[A_AXIS], (int)linesPerSpool[B_AXIS],
-									(int)linesPerSpool[C_AXIS], (int)linesPerSpool[D_AXIS],
-									(int)motorGearTeeth[A_AXIS], (int)motorGearTeeth[B_AXIS],
-									(int)motorGearTeeth[C_AXIS], (int)motorGearTeeth[D_AXIS],
-									(int)spoolGearTeeth[A_AXIS], (int)spoolGearTeeth[B_AXIS],
-									(int)spoolGearTeeth[C_AXIS], (int)spoolGearTeeth[D_AXIS],
-									(int)fullStepsPerMotorRev[A_AXIS], (int)fullStepsPerMotorRev[B_AXIS],
-									(int)fullStepsPerMotorRev[C_AXIS], (int)fullStepsPerMotorRev[D_AXIS]
+			if (ok)
+			{
+				scratchString.printf("M666 Q%.6f R%.3f:%.3f:%.3f:%.3f U%d:%d:%d:%d",
+									(double)spoolBuildupFactor, (double)spoolRadii[A_AXIS],
+									(double)spoolRadii[B_AXIS], (double)spoolRadii[C_AXIS], (double)spoolRadii[D_AXIS],
+									(int)mechanicalAdvantage[A_AXIS], (int)mechanicalAdvantage[B_AXIS],
+									(int)mechanicalAdvantage[C_AXIS], (int)mechanicalAdvantage[D_AXIS]
 						);
 				ok = f->Write(scratchString.c_str());
+				if (ok)
+				{
+					scratchString.printf(" O%d:%d:%d:%d L%d:%d:%d:%d H%d:%d:%d:%d J%d:%d:%d:%d\n",
+										(int)linesPerSpool[A_AXIS], (int)linesPerSpool[B_AXIS],
+										(int)linesPerSpool[C_AXIS], (int)linesPerSpool[D_AXIS],
+										(int)motorGearTeeth[A_AXIS], (int)motorGearTeeth[B_AXIS],
+										(int)motorGearTeeth[C_AXIS], (int)motorGearTeeth[D_AXIS],
+										(int)spoolGearTeeth[A_AXIS], (int)spoolGearTeeth[B_AXIS],
+										(int)spoolGearTeeth[C_AXIS], (int)spoolGearTeeth[D_AXIS],
+										(int)fullStepsPerMotorRev[A_AXIS], (int)fullStepsPerMotorRev[B_AXIS],
+										(int)fullStepsPerMotorRev[C_AXIS], (int)fullStepsPerMotorRev[D_AXIS]
+							);
+					ok = f->Write(scratchString.c_str());
+				}
 			}
 		}
 	}
@@ -521,7 +531,7 @@ void HangprinterKinematics::ForwardTransform(float const a, float const b, float
 {
 	// Force the anchor location norms Ax=0, Dx=0, Dy=0
 	// through a series of rotations.
-	float const x_angle = atan(anchors[D_AXIS][Y_AXIS]/anchors[D_AXIS][Z_AXIS]);
+	float const x_angle = atanf(anchors[D_AXIS][Y_AXIS]/anchors[D_AXIS][Z_AXIS]);
 	float const rxt[3][3] = {{1, 0, 0}, {0, cosf(x_angle), sinf(x_angle)}, {0, -sinf(x_angle), cosf(x_angle)}};
 	float anchors_tmp0[4][3] = { 0 };
 	for (size_t row{0}; row < 4; ++row) {
@@ -529,7 +539,7 @@ void HangprinterKinematics::ForwardTransform(float const a, float const b, float
 			anchors_tmp0[row][col] = rxt[0][col]*anchors[row][0] + rxt[1][col]*anchors[row][1] + rxt[2][col]*anchors[row][2];
 		}
 	}
-	float const y_angle = atan(-anchors_tmp0[D_AXIS][X_AXIS]/anchors_tmp0[D_AXIS][Z_AXIS]);
+	float const y_angle = atanf(-anchors_tmp0[D_AXIS][X_AXIS]/anchors_tmp0[D_AXIS][Z_AXIS]);
 	float const ryt[3][3] = {{cosf(y_angle), 0, -sinf(y_angle)}, {0, 1, 0}, {sinf(y_angle), 0, cosf(y_angle)}};
 	float anchors_tmp1[4][3] = { 0 };
 	for (size_t row{0}; row < 4; ++row) {
@@ -537,7 +547,7 @@ void HangprinterKinematics::ForwardTransform(float const a, float const b, float
 			anchors_tmp1[row][col] = ryt[0][col]*anchors_tmp0[row][0] + ryt[1][col]*anchors_tmp0[row][1] + ryt[2][col]*anchors_tmp0[row][2];
 		}
 	}
-	float const z_angle = atan(anchors_tmp1[A_AXIS][X_AXIS]/anchors_tmp1[A_AXIS][Y_AXIS]);
+	float const z_angle = atanf(anchors_tmp1[A_AXIS][X_AXIS]/anchors_tmp1[A_AXIS][Y_AXIS]);
 	float const rzt[3][3] = {{cosf(z_angle), sinf(z_angle), 0}, {-sinf(z_angle), cosf(z_angle), 0}, {0, 0, 1}};
 	for (size_t row{0}; row < 4; ++row) {
 		for (size_t col{0}; col < 3; ++col) {
@@ -777,5 +787,7 @@ GCodeResult HangprinterKinematics::SetODrive3TorqueMode(DriverId const driver, f
 	return res;
 }
 #endif // DUAL_CAN
+
+#endif // SUPPORT_HANGPRINTER
 
 // End

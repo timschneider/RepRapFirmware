@@ -122,14 +122,14 @@ constexpr ObjectModelTableEntry Move::objectModelTable[] =
 	{ "timeout",				OBJECT_MODEL_FUNC(0.001f * (float)self->idleTimeout, 1),										ObjectModelEntryFlags::none },
 
 	// 2. move.currentMove members
-	{ "acceleration",			OBJECT_MODEL_FUNC(InverseConvertAcceleration(self->GetAcceleration()), 1),						ObjectModelEntryFlags::live },
-	{ "deceleration",			OBJECT_MODEL_FUNC(InverseConvertAcceleration(self->GetDeceleration()), 1),						ObjectModelEntryFlags::live },
+	{ "acceleration",			OBJECT_MODEL_FUNC(self->GetAccelerationMmPerSecSquared(), 1),									ObjectModelEntryFlags::live },
+	{ "deceleration",			OBJECT_MODEL_FUNC(self->GetDecelerationMmPerSecSquared(), 1),									ObjectModelEntryFlags::live },
 # if SUPPORT_LASER
 	{ "laserPwm",				OBJECT_MODEL_FUNC_IF_NOSELF(reprap.GetGCodes().GetMachineType() == MachineType::laser,
 															reprap.GetPlatform().GetLaserPwm(), 2),								ObjectModelEntryFlags::live },
 # endif
-	{ "requestedSpeed",			OBJECT_MODEL_FUNC(InverseConvertSpeedToMmPerSec(self->GetRequestedSpeed()), 1),					ObjectModelEntryFlags::live },
-	{ "topSpeed",				OBJECT_MODEL_FUNC(InverseConvertSpeedToMmPerSec(self->GetTopSpeed()), 1),						ObjectModelEntryFlags::live },
+	{ "requestedSpeed",			OBJECT_MODEL_FUNC(self->GetRequestedSpeedMmPerSec(), 1),										ObjectModelEntryFlags::live },
+	{ "topSpeed",				OBJECT_MODEL_FUNC(self->GetTopSpeedMmPerSec(), 1),												ObjectModelEntryFlags::live },
 
 	// 3. move.calibration members
 	{ "final",					OBJECT_MODEL_FUNC(self, 5),																		ObjectModelEntryFlags::none },
@@ -762,6 +762,8 @@ bool Move::LoadHeightMapFromFile(FileStore *f, const char *fname, const StringRe
 	{
 		zShift = 0.0;
 	}
+	float minError, maxError;
+	(void)heightMap.GetStatistics(latestMeshDeviation, minError, maxError);
 	reprap.MoveUpdated();
 	return err;
 }
@@ -1163,9 +1165,10 @@ void Move::SetInitialCalibrationDeviation(const Deviation& d) noexcept
 	reprap.MoveUpdated();
 }
 
+// Set the mesh deviation. Caller must call MoveUpdated() after calling this. We don't do that here because the caller may change Move in other ways first.
 void Move::SetLatestMeshDeviation(const Deviation& d) noexcept
 {
-	latestMeshDeviation = d; reprap.MoveUpdated();
+	latestMeshDeviation = d;
 }
 
 const char *Move::GetCompensationTypeString() const noexcept

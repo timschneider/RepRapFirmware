@@ -105,6 +105,8 @@ public:
 	void SetAsToolHeater() noexcept;
 	void SetAsBedOrChamberHeater() noexcept;
 
+	bool IsCoolingDevice() const noexcept { return model.IsInverted(); }
+
 #if SUPPORT_REMOTE_COMMANDS
 	uint8_t GetModeByte() const { return (uint8_t)GetMode(); }
 #endif
@@ -155,8 +157,8 @@ protected:
 	static constexpr unsigned int MinTuningHeaterCycles = 5;
 	static constexpr unsigned int MaxTuningHeaterCycles = 25;
 	static constexpr float DefaultTuningHysteresis = 5.0;
+	static constexpr float DefaultTuningFanPwm = 0.7;
 	static constexpr float TuningPeakTempDrop = 2.0;		// must be well below TuningHysteresis
-	static constexpr float FeedForwardMultiplier = 1.3;		// how much we over-compensate feedforward to allow for heat reservoirs during tuning
 	static constexpr float HeaterSettledCoolingTimeRatio = 0.93;
 
 	// Variables used during heater tuning

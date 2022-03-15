@@ -119,7 +119,7 @@ constexpr uint32_t maxPidSpinDelay = 5000;			// Maximum elapsed time in millisec
 enum class BoardType : uint8_t
 {
 	Auto = 0,
-#if defined(DUET3MINI)			// we use the same values for both v0.2 and v0.4
+#if defined(DUET3MINI_V04)			// we use the same values for both v0.2 and v0.4
 	Duet3Mini_Unknown,
 	Duet3Mini_WiFi,
 	Duet3Mini_Ethernet,
@@ -128,6 +128,8 @@ enum class BoardType : uint8_t
 	Duet3_6HC_v101 = 2,
 #elif defined(DUET3_MB6XD)
 	Duet3_6XD = 1,
+#elif defined(DUET3MINI4)
+	Duet3Mini4,
 #elif defined(SAME70XPLD)
 	SAME70XPLD_0 = 1
 #elif defined(DUET_NG)
@@ -386,7 +388,7 @@ public:
     void EnableAux(size_t auxNumber) noexcept;
     bool IsAuxRaw(size_t auxNumber) const noexcept;
 	void SetAuxRaw(size_t auxNumber, bool raw) noexcept;
-#if HAS_AUX_DEVICES
+#if SUPPORT_PANELDUE_FLASH
 	PanelDueUpdater* GetPanelDueUpdater() noexcept { return panelDueUpdater; }
 	void InitPanelDueUpdater() noexcept;
 #endif
@@ -468,6 +470,11 @@ public:
 	unsigned int GetMicrostepping(size_t axisOrExtruder, bool& interpolation) const noexcept;
 	void SetDriverStepTiming(size_t driver, const float microseconds[4]) noexcept;
 	bool GetDriverStepTiming(size_t driver, float microseconds[4]) const noexcept;
+
+#ifdef DUET3_MB6XD
+	void GetActualDriverTimings(float timings[4]) noexcept;
+#endif
+
 	float DriveStepsPerUnit(size_t axisOrExtruder) const noexcept;
 	const float *_ecv_array GetDriveStepsPerUnit() const noexcept
 		{ return driveStepsPerUnit; }
@@ -700,11 +707,11 @@ private:
 	// Convert microseconds to step clocks, rounding up to the next step clock
 	static constexpr uint32_t MicrosecondsToStepClocks(float us) noexcept
 	{
-		return (uint32_t)(((float)StepClockRate * 0.000001 * us) + 0.99);
+		return (uint32_t)ceilf((float)StepClockRate * 0.000001 * us);
 	}
 
 #ifdef DUET3_MB6XD
-	void UpdateDriverTimings();
+	void UpdateDriverTimings() noexcept;
 #endif
 
 #if HAS_MASS_STORAGE
@@ -859,6 +866,8 @@ private:
 
 #if HAS_AUX_DEVICES
 	AuxDevice auxDevices[NumSerialChannels - 1];
+#endif
+#if SUPPORT_PANELDUE_FLASH
 	PanelDueUpdater* panelDueUpdater;
 #endif
 

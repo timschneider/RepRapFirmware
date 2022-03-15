@@ -327,7 +327,7 @@ constexpr ObjectModelTableEntry RepRap::objectModelTable[] =
 	{ "atxPowerPort",			OBJECT_MODEL_FUNC_IF(self->platform->IsAtxPowerControlled(), self->platform->GetAtxPowerPort()),	ObjectModelEntryFlags::none },
 	{ "beep",					OBJECT_MODEL_FUNC_IF(self->beepDuration != 0, self, 4),					ObjectModelEntryFlags::none },
 	{ "currentTool",			OBJECT_MODEL_FUNC((int32_t)self->GetCurrentToolNumber()),				ObjectModelEntryFlags::live },
-	{ "deferredPowerDown",		OBJECT_MODEL_FUNC_IF(self->platform->IsAtxPowerControlled(), (int32_t)self->platform->IsDeferredPowerDown()),	ObjectModelEntryFlags::none },
+	{ "deferredPowerDown",		OBJECT_MODEL_FUNC_IF(self->platform->IsAtxPowerControlled(), self->platform->IsDeferredPowerDown()),	ObjectModelEntryFlags::none },
 	{ "displayMessage",			OBJECT_MODEL_FUNC(self->message.c_str()),								ObjectModelEntryFlags::none },
 	{ "gpOut",					OBJECT_MODEL_FUNC_NOSELF(&gpoutArrayDescriptor),						ObjectModelEntryFlags::live },
 #if SUPPORT_LASER
@@ -1377,7 +1377,7 @@ OutputBuffer *RepRap::GetStatusResponse(uint8_t type, ResponseSource source) con
 	AppendFloatArray(response, "extr", GetExtrudersInUse(), [this](size_t extruder) noexcept { return move->LiveCoordinate(ExtruderToLogicalDrive(extruder), currentTool); }, 1);
 
 	// Current speeds
-	response->catf("},\"speeds\":{\"requested\":%.1f,\"top\":%.1f}", (double)InverseConvertSpeedToMmPerSec(move->GetRequestedSpeed()), (double)InverseConvertSpeedToMmPerSec(move->GetTopSpeed()));
+	response->catf("},\"speeds\":{\"requested\":%.1f,\"top\":%.1f}", (double)move->GetRequestedSpeedMmPerSec(), (double)move->GetTopSpeedMmPerSec());
 
 	// Current tool number
 	response->catf(",\"currentTool\":%d", GetCurrentToolNumber());
@@ -1582,7 +1582,7 @@ OutputBuffer *RepRap::GetStatusResponse(uint8_t type, ResponseSource source) con
 				first = false;
 				float temp;
 				(void)sensor->GetLatestTemperature(temp);
-				response->catf("{\"name\":\"%.s\",\"temp\":%.1f}", nm, HideNan(temp));
+				response->catf("{\"name\":\"%.s\",\"temp\":%.1f}", nm, (double)HideNan(temp));
 			}
 			nextSensorNumber = sensor->GetSensorNumber() + 1;
 		}
@@ -2267,8 +2267,14 @@ OutputBuffer *RepRap::GetFilelistResponse(const char *dir, unsigned int startAt)
 // 'offset' is the offset into the file of the thumbnail data that the caller wants.
 // It is up to the caller to get the offset right, however we must fail gracefully if the caller passes us a bad offset.
 // The offset should always be either the initial offset or the 'next' value passed in a previous call, so it should always be the start of a line.
-OutputBuffer *RepRap::GetThumbnailResponse(const char *filename, FilePosition offset) noexcept
+// 'encapsulateThumbnail' defines whether the thumbnail shall be encapsulated as a "thumbnail" property of the root object
+OutputBuffer *RepRap::GetThumbnailResponse(const char *filename, FilePosition offset, bool forM31point1) noexcept
 {
+	constexpr unsigned int ThumbnailMaxDataSizeM31 = 1024;			// small enough for PanelDue to buffer
+	constexpr unsigned int ThumbnailMaxDataSizeRr = 2600;			// about two TCP messages
+	static_assert(ThumbnailMaxDataSizeM31 % 4 == 0, "must be a multiple of to guarantee base64 alignment");
+	static_assert(ThumbnailMaxDataSizeRr % 4 == 0, "must be a multiple of to guarantee base64 alignment");
+
 	// Need something to write to...
 	OutputBuffer *response;
 	if (!OutputBuffer::Allocate(response))
@@ -2276,7 +2282,12 @@ OutputBuffer *RepRap::GetThumbnailResponse(const char *filename, FilePosition of
 		return nullptr;
 	}
 
-	response->printf("{\"fileName\":\"%.s\",\"offset\":%" PRIu32 ",", filename, offset);
+	if (forM31point1)
+	{
+		response->cat("{\"thumbnail\":");
+	}
+	response->catf("{\"fileName\":\"%.s\",\"offset\":%" PRIu32 ",", filename, offset);
+
 	FileStore *const f = platform->OpenFile(platform->GetGCodeDir(), filename, OpenMode::read);
 	unsigned int err = 0;
 	if (f != nullptr)
@@ -2284,46 +2295,67 @@ OutputBuffer *RepRap::GetThumbnailResponse(const char *filename, FilePosition of
 		if (f->Seek(offset))
 		{
 			response->cat("\"data\":\"");
-			for (unsigned int charsWritten = 0; charsWritten < 2500;)
+
+			const unsigned int thumbnailMaxDataSize = (forM31point1) ? ThumbnailMaxDataSizeM31 : ThumbnailMaxDataSizeRr;
+			for (unsigned int charsWrittenThisCall = 0; charsWrittenThisCall < thumbnailMaxDataSize; )
 			{
 				// Read a line
-				char lineBuffer[GCODE_LENGTH];
-				const int charsRead = f->ReadLine(lineBuffer, ARRAY_SIZE(lineBuffer));
-				if (charsRead < 2)
+				char lineBuffer[MaxGCodeLength];
+				const int charsRead = f->ReadLine(lineBuffer, sizeof(lineBuffer));
+				if (charsRead <= 0)
 				{
 					err = 1;
+					offset = 0;
 					break;
 				}
 
-				// Check it is a comment line
-				const char *p = lineBuffer;
-				if (*p != ';')
-				{
-					err = 1;
-					break;
-				}
-
-				// Update the file offset for returning 'next'
+				const FilePosition posOld = offset;
 				offset = f->Position();
 
-				// Skip white space
-				do
+				const char *p = lineBuffer;
+
+				// Skip white spaces
+				while ((p - lineBuffer <= charsRead) && (*p == ';' || *p == ' ' || *p == '\t'))
 				{
 					++p;
-				} while (*p == ' ' || *p == '\t');
+				}
 
-				// Check for end of thumbnail
-				const unsigned int charsLeft = (unsigned int)charsRead - (p - lineBuffer);
-				if (charsLeft == 0 || StringStartsWith(p, "thumbnail end"))
+				// Skip empty lines (there shouldn't be any, but just in case there are)
+				if (*p == '\n' || *p == '\0')
 				{
-					offset = 0;				// reached end of encoded thumbnail, so return 0 for 'next'
+					continue;
+				}
+
+				// Check for end of thumbnail. We'd like to use a regex here but we can't afford the flash space of a regex parser in some build configurations.
+				if (   StringStartsWith(p, "thumbnail end") || StringStartsWith(p, "thumbnail_QOI end") || StringStartsWith(p, "thumbnail_JPG end")
+					// Also stop if the base64 data has ended, to avoid sending to the end of file if the end marker is missing. We don't want to take too long so just look for space.
+					|| strchr(p, ' ') != nullptr
+				   )
+				{
+					offset = 0;
 					break;
+				}
+
+				const unsigned int charsSkipped = p - lineBuffer;
+				const unsigned int charsAvailable = charsRead - charsSkipped;
+				unsigned int charsWrittenFromThisLine;
+				if (charsAvailable <= thumbnailMaxDataSize - charsWrittenThisCall)
+				{
+					// Write all the data in this line
+					charsWrittenFromThisLine = charsAvailable;
+				}
+				else
+				{
+					// Write just enough characters to fill the buffer
+					charsWrittenFromThisLine = thumbnailMaxDataSize - charsWrittenThisCall;
+					offset = posOld + charsSkipped + charsWrittenFromThisLine;
 				}
 
 				// Copy the data
-				response->cat(p, charsLeft);
-				charsWritten += charsLeft;
+				response->cat(p, charsWrittenFromThisLine);
+				charsWrittenThisCall += charsWrittenFromThisLine;
 			}
+
 			response->catf("\",\"next\":%" PRIu32 ",", offset);
 		}
 		f->Close();
@@ -2333,7 +2365,7 @@ OutputBuffer *RepRap::GetThumbnailResponse(const char *filename, FilePosition of
 		err = 1;
 	}
 
-	response->catf("\"err\":%u}\n", err);
+	response->catf(forM31point1 ? "\"err\":%u}}\n" : "\"err\":%u}\n", err);
 	return response;
 }
 
@@ -2384,7 +2416,7 @@ GCodeResult RepRap::GetFileInfoResponse(const char *filename, OutputBuffer *&res
 					timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
 		}
 
-		response->catf("\"height\":%.2f,\"layerHeight\":%.2f,", (double)info.objectHeight, (double)info.layerHeight);
+		response->catf("\"height\":%.2f,\"layerHeight\":%.2f,\"numLayers\":%u,", (double)info.objectHeight, (double)info.layerHeight, info.numLayers);
 		if (info.printTime != 0)
 		{
 			response->catf("\"printTime\":%" PRIu32 ",", info.printTime);
@@ -2427,7 +2459,7 @@ GCodeResult RepRap::GetFileInfoResponse(const char *filename, OutputBuffer *&res
 								((index == 0) ? '[' : ','), inf.height, inf.width, inf.format.ToString(), inf.offset, inf.size);
 				++index;
 			}
-			while (index < GCodeFileInfo::MaxThumbnails && info.thumbnails[index].IsValid());
+			while (index < MaxThumbnails && info.thumbnails[index].IsValid());
 			response->cat(']');
 		}
 
@@ -2440,7 +2472,7 @@ GCodeResult RepRap::GetFileInfoResponse(const char *filename, OutputBuffer *&res
 }
 
 // Helper functions to write JSON arrays
-// Append float array using 1 decimal place
+// Append float array using the specified number of decimal places
 void RepRap::AppendFloatArray(OutputBuffer *buf, const char *name, size_t numValues, function_ref<float(size_t)> func, unsigned int numDecimalDigits) noexcept
 {
 	if (name != nullptr)
@@ -2454,7 +2486,8 @@ void RepRap::AppendFloatArray(OutputBuffer *buf, const char *name, size_t numVal
 		{
 			buf->cat(',');
 		}
-		buf->catf(GetFloatFormatString(numDecimalDigits), HideNan(func(i)));
+		const float fVal = HideNan(func(i));
+		buf->catf(GetFloatFormatString(fVal, numDecimalDigits), (double)fVal);
 	}
 	buf->cat(']');
 }

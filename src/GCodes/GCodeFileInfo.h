@@ -15,7 +15,7 @@ struct GCodeFileInfo
 {
 	struct ThumbnailInfo
 	{
-		NamedEnum(Format, uint8_t, png, qoi);
+		NamedEnum(Format, uint8_t, png, qoi, jpeg);
 		FilePosition offset;
 		uint32_t size;
 		uint16_t width, height;
@@ -29,13 +29,12 @@ struct GCodeFileInfo
 	GCodeFileInfo() noexcept { Init(); }
 	void Init() noexcept;
 
-	static constexpr unsigned int MaxThumbnails = 3;
-
 	FilePosition fileSize;
 	time_t lastModifiedTime;
 	float layerHeight;
+	unsigned int numLayers;
 	float objectHeight;
-	float filamentNeeded[MaxExtruders];
+	float filamentNeeded[MaxFilaments];
 	uint32_t printTime;
 	uint32_t simulatedTime;
 	unsigned int numFilaments;
