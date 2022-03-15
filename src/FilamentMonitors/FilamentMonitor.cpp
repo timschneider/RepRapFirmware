@@ -10,6 +10,7 @@
 #include "RotatingMagnetFilamentMonitor.h"
 #include "LaserFilamentMonitor.h"
 #include "PulsedFilamentMonitor.h"
+#include "AdvancedFilamentMonitor.h"
 #include <Platform/RepRap.h>
 #include <Platform/Platform.h>
 #include <Platform/Event.h>
@@ -221,6 +222,9 @@ bool FilamentMonitor::IsValid(size_t extruderNumber) const noexcept
 
 	case 7:		// simple pulse output sensor
 		fm = new PulsedFilamentMonitor(drv, monitorType, did);
+		break;
+	case 8:		// temperature monitoring + switch
+		fm = new AdvancedFilamentMonitor(drv, monitorType, did);
 		break;
 
 	default:	// no sensor, or unknown sensor
