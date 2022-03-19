@@ -8,9 +8,8 @@
 #include "FilamentMonitor.h"
 #include "SimpleFilamentMonitor.h"
 #include "RotatingMagnetFilamentMonitor.h"
-#include "LaserFilamentMonitor.h"
+//#include "LaserFilamentMonitor.h"
 #include "PulsedFilamentMonitor.h"
-#include "AdvancedFilamentMonitor.h"
 #include <Platform/RepRap.h>
 #include <Platform/Platform.h>
 #include <Platform/Event.h>
@@ -217,14 +216,11 @@ bool FilamentMonitor::IsValid(size_t extruderNumber) const noexcept
 
 	case 5:		// duet3d laser, no switch
 	case 6:		// duet3d laser + switch
-		fm = new LaserFilamentMonitor(drv, monitorType, did);
+		//fm = new LaserFilamentMonitor(drv, monitorType, did);
 		break;
 
 	case 7:		// simple pulse output sensor
 		fm = new PulsedFilamentMonitor(drv, monitorType, did);
-		break;
-	case 8:		// temperature monitoring + switch
-		fm = new AdvancedFilamentMonitor(drv, monitorType, did);
 		break;
 
 	default:	// no sensor, or unknown sensor
@@ -286,26 +282,27 @@ bool FilamentMonitor::IsValid(size_t extruderNumber) const noexcept
 				bool fromIsr;
 				int32_t extruderStepsCommanded;
 				uint32_t locIsrMillis;
-				IrqDisable();
-				if (fs.haveIsrStepsCommanded)
-				{
-					extruderStepsCommanded = fs.isrExtruderStepsCommanded;
-					isPrinting = fs.isrWasPrinting;
-					locIsrMillis = fs.lastIsrMillis;
-					fs.haveIsrStepsCommanded = false;
-					IrqEnable();
-					fromIsr = true;
-				}
-				else
-				{
-					extruderStepsCommanded = reprap.GetMove().GetAccumulatedExtrusion(fs.driveNumber, isPrinting);		// get and clear the net extrusion commanded
-					IrqEnable();
-					fromIsr = false;
-					locIsrMillis = 0;
-				}
+
 				GCodes& gCodes = reprap.GetGCodes();
 				if (gCodes.IsReallyPrinting() && !gCodes.IsSimulating())
 				{
+					IrqDisable();
+					if (fs.haveIsrStepsCommanded)
+					{
+						extruderStepsCommanded = fs.isrExtruderStepsCommanded;
+						isPrinting = fs.isrWasPrinting;
+						locIsrMillis = fs.lastIsrMillis;
+						fs.haveIsrStepsCommanded = false;
+						IrqEnable();
+						fromIsr = true;
+					}
+					else
+					{
+						extruderStepsCommanded = reprap.GetMove().GetAccumulatedExtrusion(fs.driveNumber, isPrinting);		// get and clear the net extrusion commanded
+						IrqEnable();
+						fromIsr = false;
+						locIsrMillis = 0;
+					}
 					const float extrusionCommanded = (float)extruderStepsCommanded/reprap.GetPlatform().DriveStepsPerUnit(fs.driveNumber);
 					fst = fs.Check(isPrinting, fromIsr, locIsrMillis, extrusionCommanded);
 				}

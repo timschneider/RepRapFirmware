@@ -5,6 +5,11 @@ environment/project/cdt.managedbuild.config.gnu.cross.exe.release.516195201.9764
 environment/project/cdt.managedbuild.config.gnu.cross.exe.release.516195201.976458850.1745168887/appendContributed=true
 environment/project/cdt.managedbuild.config.gnu.cross.exe.release.516195201.976458850.241502451.1275216290/append=true
 environment/project/cdt.managedbuild.config.gnu.cross.exe.release.516195201.976458850.241502451.1275216290/appendContributed=true
+environment/project/cdt.managedbuild.config.gnu.cross.exe.release.516195201.976458850.241502451.170574622/PATH/delimiter=;
+environment/project/cdt.managedbuild.config.gnu.cross.exe.release.516195201.976458850.241502451.170574622/PATH/operation=replace
+environment/project/cdt.managedbuild.config.gnu.cross.exe.release.516195201.976458850.241502451.170574622/PATH/value=${ArmGccPath};C\:\\Users\\Tim.TSE\\AppData\\Roaming\\xPacks\\@xpack-dev-tools\\windows-build-tools\\4.2.1-2.1\\.content\\bin;C\:\\Eclipse\\Firmware\\RepRapFirmware\\Tools\\crc32appender\\win-x86_64
+environment/project/cdt.managedbuild.config.gnu.cross.exe.release.516195201.976458850.241502451.170574622/append=true
+environment/project/cdt.managedbuild.config.gnu.cross.exe.release.516195201.976458850.241502451.170574622/appendContributed=true
 environment/project/cdt.managedbuild.config.gnu.cross.exe.release.516195201.976458850.241502451.286403080/LINK_FLAGS_1/delimiter=;
 environment/project/cdt.managedbuild.config.gnu.cross.exe.release.516195201.976458850.241502451.286403080/LINK_FLAGS_1/operation=append
 environment/project/cdt.managedbuild.config.gnu.cross.exe.release.516195201.976458850.241502451.286403080/LINK_FLAGS_1/value=-mthumb -Wl,--cref -Wl,--check-sections -Wl,--gc-sections -Wl,--entry\=Reset_Handler -Wl,--unresolved-symbols\=report-all -Wl,--warn-common -Wl,--warn-section-align -Wl,--warn-unresolved-symbols -Wl,--start-group
