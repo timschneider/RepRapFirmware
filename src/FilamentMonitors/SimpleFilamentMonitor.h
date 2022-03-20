@@ -31,34 +31,33 @@ protected:
 private:
 	void Poll() noexcept;
 	int GetToolNumberForDrive() noexcept;
+	float GetFanSpeed() noexcept;
 
 	bool highWhenNoFilament;
 	bool filamentPresent;
+	bool lastFanState;
 	bool enabled;
-	float baseValue;
-	float currentValue;
-	float lastValue;
-	float expectedValue;
-	float mmPerSec;
-	float fanOffset;
-	float slope;
 	float deadTime;
-	float minExtrusionSpeed;
-	float minExtrusionLength;
-	float minBaseValue;
-	float maxBaseValue;
+	float deadTimeBuffer[16];
+	unsigned int deadTimeBufferIndex;
 	float extrusionLastSegment;
 	float extrusionCommandedThisSegment;					// the amount of extrusion commanded (mm) since we last did a comparison
+	float sumHeaterEnergy;
+	float sumExtruderEnergy;
+	float minEnergyConsumption;
+	float heaterEnergyPerSec;
+	float extruderEnergyPerSec;
 	int heaterNumber;
-	unsigned int failCounter;
+	unsigned int failCount;
 
-	uint32_t lastBaseValueTime;
-	uint32_t lastActiveTime;
 	uint32_t extrusionStartingTime;
 	uint32_t extrusionEndTime;
 	uint32_t lastSegmentTime;
-	uint32_t steadySinceTime;
-	int steadyCounter;
+	uint32_t lastControlTime;
+	uint32_t lastCheckTime;
+
+	unsigned int checkDelay;
+	unsigned int additinalOnetimeDelay;
 
 	unsigned int extruder;
 };

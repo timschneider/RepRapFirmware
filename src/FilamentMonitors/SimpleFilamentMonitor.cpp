@@ -29,26 +29,20 @@
 constexpr ObjectModelTableEntry SimpleFilamentMonitor::objectModelTable[] =
 {
 	// Within each group, these entries must be in alphabetical order
-	{ "baseValue",			OBJECT_MODEL_FUNC(self->baseValue, 3),		 			ObjectModelEntryFlags::live },
-	{ "currentValue",		OBJECT_MODEL_FUNC(self->currentValue, 3),		 		ObjectModelEntryFlags::live },
-	{ "enabled",			OBJECT_MODEL_FUNC(self->enabled),		 				ObjectModelEntryFlags::none },
-	{ "expectedValue",		OBJECT_MODEL_FUNC(self->expectedValue, 3),		 		ObjectModelEntryFlags::live },
-	{ "extrusionLastSegment",	OBJECT_MODEL_FUNC(self->extrusionLastSegment, 3),	ObjectModelEntryFlags::live },
-	{ "extrusionLength",	OBJECT_MODEL_FUNC(self->extrusionCommandedThisSegment, 3),	ObjectModelEntryFlags::live },
-	//{ "extrusionStartingTime",	OBJECT_MODEL_FUNC(self->extrusionStartingTime),	ObjectModelEntryFlags::live },
-	{ "failCounter",		OBJECT_MODEL_FUNC(self->failCounter,1),					ObjectModelEntryFlags::live },
-	//{ "lastSegmentTime",			OBJECT_MODEL_FUNC(self->lastSegmentTime),						ObjectModelEntryFlags::live },
-	{ "lastValue",			OBJECT_MODEL_FUNC(self->lastValue, 3),						ObjectModelEntryFlags::live },
-	{ "maxBaseValue",		OBJECT_MODEL_FUNC(self->maxBaseValue, 3),						ObjectModelEntryFlags::live },
-	{ "minBaseValue",		OBJECT_MODEL_FUNC(self->minBaseValue, 3),						ObjectModelEntryFlags::live },
-	{ "mmPerSec",			OBJECT_MODEL_FUNC(self->mmPerSec, 3),						ObjectModelEntryFlags::live },
-	{ "status",				OBJECT_MODEL_FUNC(self->GetStatusText()),				ObjectModelEntryFlags::live },
-	{ "steadyCounter",		OBJECT_MODEL_FUNC(self->steadyCounter,1),					ObjectModelEntryFlags::live },
-	{ "steadySinceTime",	OBJECT_MODEL_FUNC(self->steadySinceTime),				ObjectModelEntryFlags::live },
-	{ "type",				OBJECT_MODEL_FUNC_NOSELF("simple"), 					ObjectModelEntryFlags::none },
+	{ "enabled",				OBJECT_MODEL_FUNC(self->enabled),		 					ObjectModelEntryFlags::none },
+	{ "extruderEnergyPerSec",	OBJECT_MODEL_FUNC(self->extruderEnergyPerSec, 3),			ObjectModelEntryFlags::live },
+	{ "extrusionLastSegment",	OBJECT_MODEL_FUNC(self->extrusionLastSegment, 3),			ObjectModelEntryFlags::live },
+	{ "extrusionLength",		OBJECT_MODEL_FUNC(self->extrusionCommandedThisSegment, 3),	ObjectModelEntryFlags::live },
+	{ "failCount",				OBJECT_MODEL_FUNC(self->failCount, 1),						ObjectModelEntryFlags::live },
+	{ "heaterEnergyPerSec",		OBJECT_MODEL_FUNC(self->heaterEnergyPerSec, 3),				ObjectModelEntryFlags::live },
+	{ "status",					OBJECT_MODEL_FUNC(self->GetStatusText()),					ObjectModelEntryFlags::live },
+	{ "sumExtruderEnergy",		OBJECT_MODEL_FUNC(self->sumExtruderEnergy, 3),				ObjectModelEntryFlags::live },
+	{ "sumHeaterEnergy",		OBJECT_MODEL_FUNC(self->sumHeaterEnergy, 3),				ObjectModelEntryFlags::live },
+	{ "type",					OBJECT_MODEL_FUNC_NOSELF("simple"), 						ObjectModelEntryFlags::none },
+
 };
 
-constexpr uint8_t SimpleFilamentMonitor::objectModelTableDescriptor[] = { 1, 15 };
+constexpr uint8_t SimpleFilamentMonitor::objectModelTableDescriptor[] = { 1, 10};
 
 DEFINE_GET_OBJECT_MODEL_TABLE(SimpleFilamentMonitor)
 
@@ -58,29 +52,30 @@ SimpleFilamentMonitor::SimpleFilamentMonitor(unsigned int drv, unsigned int moni
 	: FilamentMonitor(drv, monitorType, did),
 	  highWhenNoFilament(monitorType == 2),
 	  filamentPresent(false),
+	  lastFanState(false),
 	  enabled(false),
-	  baseValue(0.24),
-	  currentValue(0.0),
-	  lastValue(0.0),
-	  expectedValue(0.0),
-	  mmPerSec(0.0),
-	  fanOffset(0.28),
-	  slope(0.0495),
-	  deadTime(5000.0),
-	  minExtrusionSpeed(0.55),
-	  minExtrusionLength(5.0),
-	  minBaseValue(0.15),
-	  maxBaseValue(0.45),
+	  deadTime(0.312),
+	  deadTimeBufferIndex(0),
 	  extrusionCommandedThisSegment(0.0),
-	  failCounter(0),
-	  lastBaseValueTime(0),
-	  lastActiveTime(0),
+	  sumHeaterEnergy(0.0),
+	  sumExtruderEnergy(0.0),
+	  minEnergyConsumption(25.0),
+	  heaterEnergyPerSec(0.0),
+	  extruderEnergyPerSec(0.0),
+	  heaterNumber(0),
+	  failCount(0),
 	  extrusionStartingTime(0),
 	  lastSegmentTime(0),
-	  steadySinceTime(0),
-	  steadyCounter(0),
+	  lastControlTime(0),
+	  lastCheckTime(0),
+	  checkDelay(5000),
+	  additinalOnetimeDelay(0),
 	  extruder(LogicalDriveToExtruder(drv))
 {
+	for( unsigned int i=0; i < (sizeof(deadTimeBuffer)/sizeof(deadTimeBuffer[0])); i++)
+	{
+		deadTimeBuffer[i] = 0;
+	}
 }
 
 int SimpleFilamentMonitor::GetToolNumberForDrive() noexcept
@@ -175,14 +170,8 @@ FilamentSensorStatus SimpleFilamentMonitor::Check(bool isPrinting, bool fromIsr,
 	return CheckFilament(isPrinting, fromIsr, isrMillis, filamentConsumed);
 }
 
-FilamentSensorStatus SimpleFilamentMonitor::CheckFilament(bool isPrinting, bool fromIsr, uint32_t isrMillis, float filamentConsumed) noexcept
+float SimpleFilamentMonitor::GetFanSpeed() noexcept
 {
-	const uint32_t now = millis();
-	FilamentSensorStatus ret = FilamentSensorStatus::ok;
-	currentValue = reprap.GetHeat().GetAveragePWM((size_t)heaterNumber);
-
-	bool useFanOffset = false;
-
 	const Tool * const ct = reprap.GetCurrentTool();
 	if (ct != nullptr)
 	{
@@ -191,338 +180,112 @@ FilamentSensorStatus SimpleFilamentMonitor::CheckFilament(bool isPrinting, bool 
 		{
 			if (fanMapping.IsBitSet(fi))
 			{
-				if( reprap.GetFansManager().GetFanValue(fi) > 0)
-				{
-					useFanOffset = true;
-					break;
-				}
+				return reprap.GetFansManager().GetFanValue(fi);
 			}
 		}
 	}
+	return -2.0;
+}
 
-	if(filamentConsumed > 0.0) {
-		uint32_t lastSegmentDelay = (now - lastSegmentTime);
-		float mmPerSecSegment = 0.0;
+FilamentSensorStatus SimpleFilamentMonitor::CheckFilament(bool isPrinting, bool fromIsr, uint32_t isrMillis, float filamentConsumed) noexcept
+{
+	const uint32_t now = millis();
+	FilamentSensorStatus ret = FilamentSensorStatus::ok;
+	float currentValue = reprap.GetHeat().GetAveragePWM((size_t)heaterNumber);
+	bool fanState = false;
+	float fanSpeed = GetFanSpeed();
+	fanState = fanSpeed>0?true:false;
 
+	if(filamentConsumed != 0.0) {
 		if( extrusionStartingTime == 0)
 		{
 			extrusionStartingTime = lastSegmentTime;
 			extrusionEndTime = now;
 		}
-
-		if( lastSegmentDelay > 0 )
-		{
-			mmPerSecSegment = (float)((fabs(filamentConsumed) * (double)1000.0) / (double)lastSegmentDelay);
-		}
 		else
 		{
-			mmPerSecSegment = 0;
-		}
-
-		// check if it is really extruding and if it is not to fast
-		// slower than 600 mm/min
-		if( mmPerSecSegment >= 0 && mmPerSecSegment < 10.0)
-		{
-			extrusionLastSegment += filamentConsumed;
-			mmPerSec = (float)((fabs(extrusionLastSegment) * (double)1000.0) / (double)(now - extrusionStartingTime));
 			extrusionEndTime = now;
 		}
+
+		extrusionLastSegment += filamentConsumed;
 	}
 
-	if( filamentConsumed == 0 )
+	float timeDelaySec = (now - lastControlTime)/1000.0;
+	float surfaceArea = 0.06751509;
+	float deltaT = (reprap.GetHeat().GetHeaterTemperature(heaterNumber) - 20.0);
+	float totalHeatLosses = ((0.00157*deltaT+0.68033)*deltaT*surfaceArea);
+	float totalFanLosses = 0.0;
+
+	if(fanState) {
+		totalFanLosses = (-0.00087*deltaT+1.20034)*deltaT*surfaceArea + ((-0.00017*(float)pow(fanSpeed*100.0, 2.0)) + 3.415/*0.03415*100*/ * fanSpeed - 1.71875);
+	}
+
+	heaterEnergyPerSec = currentValue * 50.0 - totalHeatLosses - totalFanLosses; // 50 Watt heater -> 1W = 1 J/s
+	if( (float)fabs(heaterEnergyPerSec) < 0.1 )
 	{
-		if(extrusionStartingTime != 0 && (now - extrusionEndTime) > 200) {
-			extrusionStartingTime = 0;
-			extrusionCommandedThisSegment += extrusionLastSegment;
-			extrusionLastSegment = 0.0;
-			mmPerSec = 0.0;
+		heaterEnergyPerSec = 0;
+	}
+	sumHeaterEnergy += (heaterEnergyPerSec * (now - lastSegmentTime))/1000.0;
+
+	if(timeDelaySec > deadTime)
+	{
+		lastControlTime = now;
+		float volume = 6.3793966 * extrusionLastSegment; // PI * pow(d, 2)/4 * length
+		float mass = volume * 1.27/1000000.0; // cm³ -> mm³ / g -> kg
+		float energyPerSec = (1500.0 * mass * deltaT)/timeDelaySec; // J/(kg*K) /
+		deadTimeBuffer[deadTimeBufferIndex] = energyPerSec;
+		extrusionLastSegment = 0.0;
+		extrusionStartingTime = 0;
+		deadTimeBufferIndex = (deadTimeBufferIndex+1)%(sizeof(deadTimeBuffer)/sizeof(deadTimeBuffer[0]));
+		// before that line is the presents
+
+		// here is the past
+
+		sumExtruderEnergy += deadTimeBuffer[deadTimeBufferIndex]*deadTime;
+		extruderEnergyPerSec = deadTimeBuffer[deadTimeBufferIndex];
+	}
+
+	if(lastFanState != fanState)
+	{
+		if( fanState )
+		{
+			additinalOnetimeDelay = checkDelay * 2;
 		}
 	}
 
-	if(currentValue > 0.05 && currentValue < 0.95)
+	if((now - lastCheckTime) > (checkDelay + additinalOnetimeDelay))
 	{
-		if( (now - lastActiveTime) > 500 )
+		additinalOnetimeDelay = 0;
+		lastCheckTime = now;
+		if( sumExtruderEnergy > minEnergyConsumption )
 		{
-			lastActiveTime = now;
-
-			if ((float)fabs(lastValue - currentValue) < 0.01 )
+			if( sumHeaterEnergy < sumExtruderEnergy )
 			{
-				if(steadySinceTime == 0)
-				{
-					steadySinceTime = now;
-					steadyCounter = 0;
-					lastValue = currentValue;
-				} else {
-					if( steadyCounter < 10 )
-					{
-						steadyCounter++;
-					}
-					// if last extrison is longer than 30s ago, reset steady state
-					if(extrusionStartingTime == 0 && (now - extrusionEndTime) > 30000) {
-						steadySinceTime = now;
-						steadyCounter = 0;
-					}
-				}
-			}
-			// if it is huge / reset steady state
-			else if ((float)fabs(lastValue - currentValue) > 0.20 )
-			{
-				steadySinceTime = 0;
-				steadyCounter = 0;
-				lastValue = currentValue;
+				if(failCount < 3)
+					failCount++;
 			}
 			else
 			{
-				if( steadyCounter > 0 )
-				{
-					steadyCounter--;
-				}
-				else
-				{
-					steadySinceTime = 0;
-					lastValue = currentValue;
-				}
+				if(failCount > 0)
+					failCount--;
 			}
+			sumHeaterEnergy = 0;
+			sumExtruderEnergy = 0;
 		}
 	}
-	else
+
+	if( failCount >= 3 )
 	{
-		steadySinceTime = 0;
-	}
-
-	if(steadySinceTime != 0 && (now - steadySinceTime) > deadTime )
-	{
-		if((now - lastBaseValueTime) > 500)
-		{
-			lastBaseValueTime = now;
-
-			/*if( mmPerSec > 0 && mmPerSec < minExtrusionSpeed)
-			{
-				// compensate the slow extrusion
-				baseValue = fmax(minBaseValue, fmin(maxBaseValue, ((1.0 - 0.1 ) * baseValue) + (currentValue - slope * mmPerSec - ( useFanOffset?fanOffset:0.0)) * 0.1));
-			}
-			else if(mmPerSec == 0)
-			{
-				baseValue = fmax(minBaseValue, fmin(maxBaseValue, ((1.0 - 0.1 ) * baseValue) + (currentValue - ( useFanOffset?fanOffset:0.0)) * 0.1));
-			}*/
-
-			expectedValue = ((baseValue) + slope * mmPerSec) * 0.9 + ( useFanOffset?fanOffset:0.0);
-
-			if( extrusionLastSegment > minExtrusionLength )
-			{
-				if( currentValue < expectedValue)
-				{
-					if(failCounter < 10)
-						failCounter++;
-				}
-				else
-				{
-					if(failCounter > 0)
-						failCounter--;
-				}
-			}
-		}
-	}
-	else
-	{
-		failCounter = 0;
-	}
-
-	if( failCounter > 5)
-	{
+		failCount = 0;
 		ret = FilamentSensorStatus::tooLittleMovement;
 	}
-	/*if( steadySinceTime != 0 && (now - steadySinceTime) > 30000 )
-	{
-		if( isPrinting && (maxBaseValue - minBaseValue) < 0.1 )
-		{
-			ret = FilamentSensorStatus::tooLittleMovement;
-		}
-		steadySinceTime = 0;
-	}*/
-
-	// check if the time belongs to current segment
-	/*if(lastSegmentDelay > 200) {
-		lastSegmentTime = 0;
-	}
-
-	// track the start of extruding
-	if( filamentConsumed != 0 )
-	{
-		if( extrusionStartingTime == 0 )
-		{
-			extrusionStartingTime = lastSegmentTime!=0?lastSegmentTime:now;
-		}
-		if(steadySinceTime != 0)
-		{
-			filamentConsumedSinceSteady = true;
-		}
-	}
-	else
-	{
-		if(steadySinceTime != 0 && (now - steadySinceTime) > 30000 )
-		{
-			steadySinceTime = 0;
-		}
-	}
-
-	// no time is available at the beginning of at extrusion move
-	if( lastSegmentTime !=0 && extrusionLastSegment != 0) {
-		mmPerSec = ((float)fabs(extrusionLastSegment)) / (now - lastSegmentTime) / 1000.0;
-	}
-	else
-	{
-		mmPerSec = 0;
-	}
-
-	// check if it is to fast for extrusion
-	// possible retraction move
-	if( extrusionLastSegment > 0 && mmPerSec > 0 && mmPerSec < 10.0 )
-	{
-		extrusionCommandedThisSegment += extrusionLastSegment;
-		extrusionLastSegment = 0;
-		mmPerSec = ((float)fabs(extrusionCommandedThisSegment)) / (now - extrusionStartingTime) / 1000.0;
-		extrusionStartingTime = 0;
-	}
-	else
-	{
-		mmPerSec = 0;
-		extrusionLastSegment = 0.0;
-		extrusionStartingTime = 0.0;
-	}*/
-
-
-
-
-	/*if( extrusionCommandedThisSegment > 0 && extrusionLastSegment == 0 )
-	{
-		if(currentValue > 0.05 && currentValue < 0.95)
-		{
-			if ((float)fabs(lastValue - currentValue) < 0.05)
-			{
-				if(steadySinceTime == 0)
-				{
-					steadySinceTime = now;
-				}
-			}
-			else
-			{
-				steadySinceTime = 0;
-			}
-		}
-		else
-		{
-			steadySinceTime = 0;
-		}
-
-		if( isPrinting && steadySinceTime != 0 && (now - steadySinceTime) > 30000 )
-		{
-			ret = FilamentSensorStatus::tooLittleMovement;
-			steadySinceTime = 0;
-		}*/
-
-		/*const float delay = (now - extrusionStartingTime);
-		if( delay > 0 )
-		{
-			mmPerSec = (extrusionCommandedThisSegment * 1000.0) / delay;
-		}
-
-		bool useFanOffset = false;
-
-		const Tool * const ct = reprap.GetCurrentTool();
-		if (ct != nullptr)
-		{
-			FansBitmap fanMapping = ct->GetFanMapping();
-			for (size_t fi = 0; fi < MaxFans; ++fi)
-			{
-				if (fanMapping.IsBitSet(fi))
-				{
-					if( reprap.GetFansManager().GetFanValue(fi) > 0)
-					{
-						useFanOffset = true;
-						break;
-					}
-				}
-			}
-		}
-
-		expectedValue = ((baseValue + ( useFanOffset?fanOffset:0.0)) + slope * mmPerSec) * 0.9;
-
-		// is more than minExtrusionLength filament extruded?
-		// or at begin of extruding wait for dead time
-		if (extrusionCommandedThisSegment > minExtrusionLength && ( (now - extrusionStartingTime) > deadTime ))
-		{
-			if( mmPerSec > minExtrusionSpeed)
-			{
-				if( currentValue < expectedValue )
-				{
-					if(failCounter < 2)
-					{
-						failCounter++;
-					}
-					else
-					{
-						ret = FilamentSensorStatus::tooLittleMovement;
-					}
-				}
-				else
-				{
-					if( failCounter != 0 )
-					{
-						failCounter--;
-					}
-				}
-			}
-
-			// discard the values
-			extrusionCommandedThisSegment = 0.0;
-			extrusionStartingTime = 0;
-		}
-
-		// if we are driving very slow, we can recalculate the base value
-		if( filamentConsumed > 0 && mmPerSec > minExtrusionSpeed )
-		{
-			lastActiveTime = now;
-		}
-
-		if( (now - lastActiveTime) > 500 )
-		{
-			// wait 100 millis for the next step
-			lastActiveTime = now - 400;
-			// built the average of the average pwm, but wait for stable values
-			if (currentValue > 0.05 && (float)fabs(lastValue - currentValue) < 0.05)
-			{
-				if( mmPerSec > 0 && mmPerSec < minExtrusionSpeed)
-				{
-					// compensate the slow extrusion
-					baseValue = fmax(minBaseValue, fmin(maxBaseValue, ((1.0 - 0.3 ) * baseValue) + (currentValue - slope * mmPerSec - ( useFanOffset?fanOffset:0.0)) * 0.3));
-				}
-				else
-				{
-					baseValue = fmax(minBaseValue, fmin(maxBaseValue, ((1.0 - 0.3 ) * baseValue) + (currentValue - ( useFanOffset?fanOffset:0.0)) * 0.3));
-				}
-			}
-
-			extrusionCommandedThisSegment = 0.0;
-			extrusionStartingTime = 0;
-			expectedValue = 0.0;
-			mmPerSec = 0.0;
-			failCounter = 0;
-		}*/
-	//}
-
-	if (filamentPresent == false)
+	else if (filamentPresent == false)
 	{
 		ret = FilamentSensorStatus::noFilament;
 	}
 
-	/*if( extrusionStartingTime == 0 )
-	{
-		extrusionCommandedThisSegment = 0.0;
-		mmPerSec = 0.0;
-	}*/
-
 	lastSegmentTime = now;
+	lastFanState = fanState;
 
 	return ret;
 }
