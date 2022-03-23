@@ -68,6 +68,7 @@ SimpleFilamentMonitor::SimpleFilamentMonitor(unsigned int drv, unsigned int moni
 	  lastSegmentTime(0),
 	  lastControlTime(0),
 	  lastCheckTime(0),
+	  lastActiveTime(0),
 	  checkDelay(5000),
 	  additinalOnetimeDelay(0),
 	  extruder(LogicalDriveToExtruder(drv))
@@ -113,6 +114,8 @@ GCodeResult SimpleFilamentMonitor::Configure(GCodeBuffer& gb, const StringRef& r
 		// An : 1 = check all extruder moves ; 0 = only printing
 		// Bnn : base value for avgPwm without fan in idle at desired temp
 		// Lnn : calibration factor / slope
+
+		bedHeaterNumber = reprap.GetHeat().GetBedHeater(0);
 
 		ReadLockedPointer<Tool> tool = reprap.GetTool(GetToolNumberForDrive());
 		if (tool.IsNull())
@@ -192,6 +195,7 @@ FilamentSensorStatus SimpleFilamentMonitor::CheckFilament(bool isPrinting, bool 
 	const uint32_t now = millis();
 	FilamentSensorStatus ret = FilamentSensorStatus::ok;
 	float currentValue = reprap.GetHeat().GetAveragePWM((size_t)heaterNumber);
+	float currentBedValue = reprap.GetHeat().GetAveragePWM((size_t)bedHeaterNumber);
 	bool fanState = false;
 	float fanSpeed = GetFanSpeed();
 	fanState = fanSpeed>0?true:false;
@@ -216,11 +220,33 @@ FilamentSensorStatus SimpleFilamentMonitor::CheckFilament(bool isPrinting, bool 
 	float totalHeatLosses = ((0.00157*deltaT+0.68033)*deltaT*surfaceArea);
 	float totalFanLosses = 0.0;
 
+	float m[MaxAxes];
+	reprap.GetMove().GetCurrentMachinePosition(m, true);		// get height with bed compensation
+	float zheightCorrection = 0.0;
+
+	if(m[Z_AXIS] > 15.8)
+	{
+		zheightCorrection = 0.52381;
+	}
+	else
+	{
+		zheightCorrection = (float)fmin((-0.0476*m[Z_AXIS] + 1.2857), 1.05);
+	}
+
+	float totalBedGain = 0.0;
+
+	if(reprap.GetHeat().IsHeaterEnabled(bedHeaterNumber) && currentBedValue > 0.0)
+	{
+		float bedHeaterTemp = reprap.GetHeat().GetHeaterTemperature(bedHeaterNumber);
+		float bedTempDrift = -0.01486*bedHeaterTemp + 1.31366;
+		totalBedGain = (float)fmin(1.05, (0.7414*currentBedValue + 0.5459)) * zheightCorrection - bedTempDrift;
+	}
+
 	if(fanState) {
 		totalFanLosses = (-0.00087*deltaT+1.20034)*deltaT*surfaceArea + ((-0.00017*(float)pow(fanSpeed*100.0, 2.0)) + 3.415/*0.03415*100*/ * fanSpeed - 1.71875);
 	}
 
-	heaterEnergyPerSec = currentValue * 50.0 - totalHeatLosses - totalFanLosses; // 50 Watt heater -> 1W = 1 J/s
+	heaterEnergyPerSec = currentValue * 50.0 + totalBedGain - totalHeatLosses - totalFanLosses; // 50 Watt heater -> 1W = 1 J/s
 	if( (float)fabs(heaterEnergyPerSec) < 0.1 )
 	{
 		heaterEnergyPerSec = 0;
@@ -271,6 +297,7 @@ FilamentSensorStatus SimpleFilamentMonitor::CheckFilament(bool isPrinting, bool 
 			}
 			sumHeaterEnergy = 0;
 			sumExtruderEnergy = 0;
+			lastActiveTime = now;
 		}
 	}
 
@@ -282,6 +309,15 @@ FilamentSensorStatus SimpleFilamentMonitor::CheckFilament(bool isPrinting, bool 
 	else if (filamentPresent == false)
 	{
 		ret = FilamentSensorStatus::noFilament;
+	}
+
+	// checkDelay default is 5sec
+	// timeout should be around 30-45 sec
+	if((now - lastActiveTime) > (checkDelay * 8))
+	{
+		sumHeaterEnergy = 0;
+		sumExtruderEnergy = 0;
+		lastActiveTime = now;
 	}
 
 	lastSegmentTime = now;

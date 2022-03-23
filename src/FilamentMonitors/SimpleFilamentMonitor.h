@@ -48,6 +48,7 @@ private:
 	float heaterEnergyPerSec;
 	float extruderEnergyPerSec;
 	int heaterNumber;
+	int bedHeaterNumber;
 	unsigned int failCount;
 
 	uint32_t extrusionStartingTime;
@@ -55,6 +56,7 @@ private:
 	uint32_t lastSegmentTime;
 	uint32_t lastControlTime;
 	uint32_t lastCheckTime;
+	uint32_t lastActiveTime;
 
 	unsigned int checkDelay;
 	unsigned int additinalOnetimeDelay;
