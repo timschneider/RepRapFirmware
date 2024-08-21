@@ -946,12 +946,23 @@ GCodeResult Tool::GetSetFeedForward(GCodeBuffer& gb, const StringRef& reply) THR
 		gb.GetFloatArray(heaterFeedForward, numValues, false);
 		ToolUpdated();
 	}
+	else if (gb.Seen('T'))
+	{
+		size_t numValues = heaterCount;
+		gb.GetFloatArray(temperatureFeedForward, numValues, false);
+		ToolUpdated();
+	}
 	else
 	{
 		reply.printf("Tool %u heater feedforward:", myNumber);
 		for (size_t i = 0; i < heaterCount; ++i)
 		{
 			reply.catf(" %.3f", (double)heaterFeedForward[i]);
+		}
+		reply.printf("Tool %u temperature feedforward:", myNumber);
+		for (size_t i = 0; i < heaterCount; ++i)
+		{
+			reply.catf(" %.3f", (double)temperatureFeedForward[i]);
 		}
 	}
 
@@ -964,7 +975,7 @@ void Tool::ApplyFeedForward(float extrusionSpeed) const noexcept
 	Heat& heat = reprap.GetHeat();
 	for (size_t i = 0; i < heaterCount; ++i)
 	{
-		heat.SetExtrusionFeedForward(heaters[i], extrusionSpeed * heaterFeedForward[i]);
+		heat.SetExtrusionFeedForward(heaters[i], extrusionSpeed * heaterFeedForward[i], extrusionSpeed * temperatureFeedForward[i]);
 	}
 }
 
@@ -974,7 +985,7 @@ void Tool::StopFeedForward() const noexcept
 	Heat& heat = reprap.GetHeat();
 	for (size_t i = 0; i < heaterCount; ++i)
 	{
-		heat.SetExtrusionFeedForward(heaters[i], 0.0);
+		heat.SetExtrusionFeedForward(heaters[i], 0.0, 0.0);
 	}
 }
 
