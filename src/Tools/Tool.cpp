@@ -940,16 +940,21 @@ GCodeResult Tool::SetFirmwareRetraction(GCodeBuffer &gb, const StringRef &reply,
 
 GCodeResult Tool::GetSetFeedForward(GCodeBuffer& gb, const StringRef& reply) THROWS(GCodeException)
 {
+	bool seen = false;
 	if (gb.Seen('S'))
 	{
 		size_t numValues = heaterCount;
 		gb.GetFloatArray(heaterFeedForward, numValues, false);
-		ToolUpdated();
+		seen = true;
 	}
-	else if (gb.Seen('T'))
+	if (gb.Seen('T'))
 	{
 		size_t numValues = heaterCount;
 		gb.GetFloatArray(temperatureFeedForward, numValues, false);
+		seen = true;
+	}
+	if (seen)
+	{
 		ToolUpdated();
 	}
 	else
@@ -959,7 +964,7 @@ GCodeResult Tool::GetSetFeedForward(GCodeBuffer& gb, const StringRef& reply) THR
 		{
 			reply.catf(" %.3f", (double)heaterFeedForward[i]);
 		}
-		reply.printf("Tool %u temperature feedforward:", myNumber);
+		reply.catf("; temperature feedforward:", myNumber);
 		for (size_t i = 0; i < heaterCount; ++i)
 		{
 			reply.catf(" %.3f", (double)temperatureFeedForward[i]);
